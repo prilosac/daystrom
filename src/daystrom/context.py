@@ -6,6 +6,7 @@ class Message:
     def __str__(self):
         return f"{self.role}: {self.text}"
 
+
 class Context:
     def __init__(self):
         self.messages: list[Message] = []
