@@ -1,19 +1,21 @@
+import os
+
 from openrouter import OpenRouter
 from openrouter.components import AssistantMessage
 from openrouter.components import Message as OpenRouterMessage  # , ToolResponseMessage
 from openrouter.components import SystemMessage, UserMessage
 
-from daystrom.context import Context
+from daystrom import Context
 
 
 class OpenRouterChat:
     def __init__(
         self,
-        api_key,
-        model="anthropic/claude-haiku-4.5",
+        model: str,
+        api_key: str | None = None,
         context: Context | None = None,
     ):
-        self.client = OpenRouter(api_key=api_key)
+        self.client = OpenRouter(api_key=os.getenv("OPENROUTER_API_KEY") or api_key)
         if context:
             self.context = context
         else:

@@ -1,13 +1,11 @@
 import pytest
 
-from daystrom.nodes.openrouter.chat import OpenRouterChat
-
-OPENROUTER_KEY = ""
+from daystrom.components.openrouter import OpenRouterChat
 
 
 @pytest.fixture
 def client():
-    return OpenRouterChat(api_key=OPENROUTER_KEY, model="anthropic/claude-haiku-4.5")
+    return OpenRouterChat(model="anthropic/claude-haiku-4.5")
 
 
 @pytest.fixture
