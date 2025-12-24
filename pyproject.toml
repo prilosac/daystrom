@@ -11,6 +11,7 @@ license = "FSL-1.1-MIT"
 #license = { text = "FSL-1.1-MIT" }
 #license-files = ["LICENSE.md"]
 dependencies = [
+    "docstring-parser>=0.17.0",
     "instructor>=1.13.0",
     "openai>=2.13.0",
     "openrouter>=0.1.1",

@@ -1,5 +1,6 @@
 import os
 from dataclasses import dataclass
+from typing import Generic, TypeVar
 
 import instructor
 from openai.types.chat import (  # ChatCompletionDeveloperMessageParam, # should probably use this one, it replaces system_message on some newer models apparently; ChatCompletionFunctionMessageParam,; ChatCompletionToolMessageParam,
@@ -10,7 +11,8 @@ from openai.types.chat import (  # ChatCompletionDeveloperMessageParam, # should
 )
 from pydantic import BaseModel
 
-from daystrom.context import Context
+from daystrom import Context
+from daystrom.components import Component
 from daystrom.exceptions import InvalidComponentError
 
 
@@ -24,16 +26,19 @@ class Providers:
     openrouter = Provider(name="openrouter", display_name="OpenRouter")
 
 
-class Instructor:
+InstructorResponseT = TypeVar("InstructorResponseT", bound=BaseModel)
+
+
+class Instructor(Component[InstructorResponseT]):
     client: instructor.Instructor
-    response_model: type[BaseModel]
+    response_model: type[InstructorResponseT]
     context: Context
 
     def __init__(
         self,
         provider: Provider,
         model: str,
-        response_model: type[BaseModel],
+        response_model: type[InstructorResponseT],
         api_key: str | None = None,
         context: Context | None = None,
     ):
@@ -55,15 +60,15 @@ class Instructor:
         else:
             self.context = Context()
 
-    def invoke(self, prompt: str) -> BaseModel:
+    def invoke(self, prompt: str) -> InstructorResponseT:
         self.context.add_message("user", prompt)
-        messages = self.get_prompt_context()
+        messages = self._get_prompt_context()
         response = self.client.create(
             response_model=self.response_model, messages=messages, max_retries=3
         )
         return response
 
-    def get_prompt_context(self) -> list[ChatCompletionMessageParam]:
+    def _get_prompt_context(self) -> list[ChatCompletionMessageParam]:
         """
         Returns the messages in the context formatted for OpenRouter API
         """

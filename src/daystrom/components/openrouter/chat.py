@@ -6,9 +6,10 @@ from openrouter.components import Message as OpenRouterMessage  # , ToolResponse
 from openrouter.components import SystemMessage, UserMessage
 
 from daystrom import Context
+from daystrom.components import LLM
 
 
-class OpenRouterChat:
+class OpenRouterChat(LLM[str]):
     def __init__(
         self,
         model: str,
@@ -23,12 +24,12 @@ class OpenRouterChat:
         self.model = model
         super().__init__()
 
-    def invoke(self, prompt):
+    def invoke(self, prompt) -> str:
         return "".join(self.invoke_stream(prompt))
 
     def invoke_stream(self, prompt):
         self.context.add_message("user", prompt)
-        messages = self.get_prompt_context()
+        messages = self._get_prompt_context()
         res = self.client.chat.send(messages=messages, model=self.model, stream=True)
 
         response_content = ""
@@ -39,12 +40,12 @@ class OpenRouterChat:
                 yield content_chunk
         self.context.add_message("assistant", response_content)
 
-    async def ainvoke(self, prompt):
+    async def ainvoke(self, prompt) -> str:
         return "".join([chunk async for chunk in self.ainvoke_stream(prompt)])
 
     async def ainvoke_stream(self, prompt):
         self.context.add_message("user", prompt)
-        messages = self.get_prompt_context()
+        messages = self._get_prompt_context()
         res = await self.client.chat.send_async(
             messages=messages, model=self.model, stream=True
         )
@@ -57,7 +58,7 @@ class OpenRouterChat:
                 yield content_chunk
         self.context.add_message("assistant", response_content)
 
-    def get_prompt_context(self) -> list[OpenRouterMessage]:
+    def _get_prompt_context(self) -> list[OpenRouterMessage]:
         """
         Returns the messages in the context formatted for OpenRouter API
         """

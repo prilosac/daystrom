@@ -3,8 +3,8 @@
 ## Build & Test Commands
 - Install: `uv sync && uv pip install -e .`
 - Run all tests: `uv run pytest`
-- Run single test file: `uv run pytest tests/integration/nodes/openrouter/test_chat.py`
-- Run single test: `uv run pytest tests/integration/nodes/openrouter/test_chat.py::test_invoke`
+- Run single test file: `uv run pytest tests/integration/components/openrouter/test_chat.py`
+- Run single test: `uv run pytest tests/integration/components/openrouter/test_chat.py::test_invoke`
 - Type check: `uv run pyright`
 
 ## Code Style
@@ -20,6 +20,21 @@
 - Python 3.12, managed with `uv`
 
 ## Architecture Notes
-- **LLM Nodes**: Chat nodes (e.g., `OpenRouterChat`) should expose their underlying client for composition with other tools like Instructor.
+- **Context Management**: Context is a shared classed used by all LLM driven components. Each individual component knows how to manipulate it's own context to make it's own calls. This allows context to be exposed and optionally passed between components to maintain a chain of thought, e.g.:
+```python
+client=OpenRouterChat(...)
+Instructor(context=client.context, ...)
+```
+Alternatively, a custom context could be constructed out of the source context to initialize a new component with; for example summarizing or truncating the previous context, e.g. truncating to the last 5 messages:
+```python
+client=OpenRouterChat(...)
+Instructor(context=Context(messages=client.context.messages[:-5]), ...)
+```
+Or, new components might be initialized with no context, depending on the situation
+```python
+client=OpenRouterChat(...)
+Instructor(...)
+```
+- **LLM Nodes**: Chat nodes (e.g., `OpenRouterChat`) should expose their underlying client for composition with other tools as necessary
 - **Structured Output**: Use Pydantic models for schemas. For dynamic/user-defined schemas, use `pydantic.create_model()`. Wrap LLM clients with Instructor for structured output with retries.
 - **Composability**: Prefer designs where nodes can be passed into other nodes (e.g., `StructuredOutput(chat=my_chat_node, response_model=MySchema)`).
