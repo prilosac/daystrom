@@ -1,7 +1,7 @@
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Generic, TypeVar
+from typing import Generic, Literal, TypeVar
 
 from daystrom import Provider
 from daystrom.components.tool_util import CUSTOM_TOOLS, DEFAULT_TOOLS, Tool
@@ -78,6 +78,13 @@ class Context:
 class LLMResponse:
     text: str
     tool_calls: list[ToolCall]
+
+
+@dataclass
+class LLMStreamEvent:
+    type: Literal["text_delta", "message_done"]
+    text: str = ""
+    response: LLMResponse | None = None
 
 
 @dataclass

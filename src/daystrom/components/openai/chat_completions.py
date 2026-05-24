@@ -1,12 +1,12 @@
 import json
-import os
-from typing import get_origin
+from collections.abc import AsyncIterator, Iterator
+from dataclasses import dataclass
+from typing import Any, get_origin
 
-from openai import OpenAI
+from openai import AsyncOpenAI, OpenAI
 from openai.types.chat import (
     ChatCompletionAssistantMessageParam,
     ChatCompletionDeveloperMessageParam,
-    ChatCompletionMessageFunctionToolCall,
     ChatCompletionMessageParam,
     ChatCompletionToolMessageParam,
     ChatCompletionToolParam,
@@ -16,8 +16,16 @@ from openai.types.chat import (
 from openai.types.shared_params import FunctionDefinition
 
 from daystrom import Provider
-from daystrom.components import LLM, Context, LLMResponse, Tool, ToolCall
+from daystrom.components import LLM, Context, LLMResponse, LLMStreamEvent, Tool, ToolCall
 from daystrom.exceptions import InvalidComponentError
+
+
+@dataclass
+class _StreamingToolCall:
+    id: str = ""
+    name: str = ""
+    arguments: str = ""
+    type: str = "function"
 
 
 class OpenAIChatCompletions(LLM):
@@ -33,44 +41,193 @@ class OpenAIChatCompletions(LLM):
             tools=tools or {},
             provider=provider or Provider.OPENAI,
         )
+        self.api_key = api_key or self.provider.value.get_api_key()
         self.client = OpenAI(
             base_url=self.provider.value.base_url,
-            api_key=api_key or self.provider.value.get_api_key(),
+            api_key=self.api_key,
         )
+        self._async_client: AsyncOpenAI | None = None
 
     def invoke(self, context: Context | None = None) -> LLMResponse:
-        messages = self._get_prompt_context(context)
-        completion = self.client.chat.completions.create(
-            model=self.model,
-            tools=self._get_tool_context(),
-            messages=messages,
-        )
-        self.track_usage(completion.usage)
-        completion_text = completion.choices[0].message.content or ""
-
-        # tool calls from openai api
-        tool_calls = []
-        for tool_call in completion.choices[0].message.tool_calls or []:
-            if isinstance(tool_call, ChatCompletionMessageFunctionToolCall):
-                tool = ToolCall(
-                    tool=self.tools[tool_call.function.name],
-                    tool_call_id=tool_call.id,
-                    args=[],
-                    kwargs=(
-                        json.loads(tool_call.function.arguments)
-                        if tool_call.function.arguments
-                        else {}
-                    ),
-                )
-                tool_calls.append(tool)
-            else:
-                raise InvalidComponentError(
-                    self.__class__.__name__,
-                    "Found unsupported tool call - missing 'function' attribute",
-                )
-
-        response = LLMResponse(text=completion_text, tool_calls=tool_calls)
+        response = LLMResponse(text="", tool_calls=[])
+        for event in self.invoke_stream(context):
+            if event.type == "message_done" and event.response is not None:
+                response = event.response
         return response
+
+    def invoke_stream(self, context: Context | None = None) -> Iterator[LLMStreamEvent]:
+        stream = self.client.chat.completions.create(
+            **self._get_completion_kwargs(context),
+            stream=True,
+            stream_options={"include_usage": True},
+        )
+
+        text_chunks: list[str] = []
+        tool_calls: dict[int, _StreamingToolCall] = {}
+        for chunk in stream:
+            yield from self._handle_stream_chunk(chunk, text_chunks, tool_calls)
+
+        yield LLMStreamEvent(
+            type="message_done",
+            response=self._build_response_from_stream(text_chunks, tool_calls),
+        )
+
+    async def ainvoke(self, context: Context | None = None) -> LLMResponse:
+        response = LLMResponse(text="", tool_calls=[])
+        async for event in self.ainvoke_stream(context):
+            if event.type == "message_done" and event.response is not None:
+                response = event.response
+        return response
+
+    async def ainvoke_stream(
+        self, context: Context | None = None
+    ) -> AsyncIterator[LLMStreamEvent]:
+        stream = await self.async_client.chat.completions.create(
+            **self._get_completion_kwargs(context),
+            stream=True,
+            stream_options={"include_usage": True},
+        )
+
+        text_chunks: list[str] = []
+        tool_calls: dict[int, _StreamingToolCall] = {}
+        async for chunk in stream:
+            for event in self._handle_stream_chunk(chunk, text_chunks, tool_calls):
+                yield event
+
+        yield LLMStreamEvent(
+            type="message_done",
+            response=self._build_response_from_stream(text_chunks, tool_calls),
+        )
+
+    @property
+    def async_client(self) -> AsyncOpenAI:
+        if self._async_client is None:
+            self._async_client = AsyncOpenAI(
+                base_url=self.provider.value.base_url,
+                api_key=self.api_key,
+            )
+        return self._async_client
+
+    def _get_completion_kwargs(self, context: Context | None = None) -> dict[str, Any]:
+        return {
+            "model": self.model,
+            "tools": self._get_tool_context(),
+            "messages": self._get_prompt_context(context),
+        }
+
+    def _handle_stream_chunk(
+        self,
+        chunk: Any,
+        text_chunks: list[str],
+        tool_calls: dict[int, _StreamingToolCall],
+    ) -> list[LLMStreamEvent]:
+        self.track_usage(getattr(chunk, "usage", None))
+        events: list[LLMStreamEvent] = []
+
+        for choice in getattr(chunk, "choices", []) or []:
+            delta = getattr(choice, "delta", None)
+            if delta is None:
+                continue
+
+            content = getattr(delta, "content", None)
+            if isinstance(content, str) and content:
+                text_chunks.append(content)
+                events.append(LLMStreamEvent(type="text_delta", text=content))
+
+            for tool_call_delta in getattr(delta, "tool_calls", None) or []:
+                self._accumulate_tool_call_delta(tool_call_delta, tool_calls)
+
+        return events
+
+    def _accumulate_tool_call_delta(
+        self,
+        tool_call_delta: Any,
+        tool_calls: dict[int, _StreamingToolCall],
+    ) -> None:
+        index = getattr(tool_call_delta, "index", None)
+        if index is None:
+            index = len(tool_calls)
+
+        tool_call = tool_calls.setdefault(index, _StreamingToolCall())
+
+        tool_call_id = getattr(tool_call_delta, "id", None)
+        if tool_call_id:
+            tool_call.id = tool_call_id
+
+        tool_call_type = getattr(tool_call_delta, "type", None)
+        if tool_call_type:
+            tool_call.type = tool_call_type
+
+        function = getattr(tool_call_delta, "function", None)
+        if function is None:
+            return
+
+        name = getattr(function, "name", None)
+        if name:
+            tool_call.name = name
+
+        arguments = getattr(function, "arguments", None)
+        if arguments:
+            tool_call.arguments += arguments
+
+    def _build_response_from_stream(
+        self,
+        text_chunks: list[str],
+        streamed_tool_calls: dict[int, _StreamingToolCall],
+    ) -> LLMResponse:
+        tool_calls = [
+            self._build_tool_call(
+                tool_call_id=tool_call.id,
+                tool_name=tool_call.name,
+                arguments=tool_call.arguments,
+                tool_type=tool_call.type,
+            )
+            for _, tool_call in sorted(streamed_tool_calls.items())
+        ]
+        return LLMResponse(text="".join(text_chunks), tool_calls=tool_calls)
+
+    def _build_tool_call(
+        self,
+        tool_call_id: str,
+        tool_name: str,
+        arguments: str,
+        tool_type: str | None = "function",
+    ) -> ToolCall:
+        if tool_type != "function" or not tool_name:
+            raise InvalidComponentError(
+                self.__class__.__name__,
+                "Found unsupported tool call - missing 'function' attribute",
+            )
+        if not tool_call_id:
+            raise InvalidComponentError(
+                self.__class__.__name__,
+                f"Found invalid tool call for '{tool_name}' - missing tool call id",
+            )
+        if tool_name not in self.tools:
+            raise InvalidComponentError(
+                self.__class__.__name__,
+                f"Found invalid tool call - unknown tool '{tool_name}'",
+            )
+
+        try:
+            kwargs = json.loads(arguments) if arguments else {}
+        except json.JSONDecodeError as exc:
+            raise InvalidComponentError(
+                self.__class__.__name__,
+                f"Found invalid tool call arguments for '{tool_name}' - malformed JSON",
+            ) from exc
+        if not isinstance(kwargs, dict):
+            raise InvalidComponentError(
+                self.__class__.__name__,
+                f"Found invalid tool call arguments for '{tool_name}' - expected JSON object",
+            )
+
+        return ToolCall(
+            tool=self.tools[tool_name],
+            tool_call_id=tool_call_id,
+            args=[],
+            kwargs=kwargs,
+        )
 
     def track_usage(self, usage):
         if usage:
