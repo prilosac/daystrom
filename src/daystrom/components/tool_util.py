@@ -46,6 +46,10 @@ def tool(func=None, *, type="custom"):
                 raise TypeError("*args is not supported in tool parameters.")
             if param.kind == inspect.Parameter.VAR_KEYWORD:
                 raise TypeError("**kwargs is not supported in tool parameters.")
+            # pattern here is that keyword only arguments are recognized and
+            # injected by the agent, not for the LLM to be concerned with
+            if param.kind == inspect.Parameter.KEYWORD_ONLY:
+                continue
 
             required = False
             if param.default is inspect.Parameter.empty:

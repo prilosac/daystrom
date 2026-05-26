@@ -1,9 +1,78 @@
 import json
+from pathlib import Path
 
 from markdownify import markdownify as md
 
 from daystrom.components.tool_util import tool
 from daystrom.exceptions import ToolCallError
+from daystrom.permissions import ReadPermission
+from daystrom.skills import Skill, load_skill
+
+
+@tool(type="default")
+def skill(skill_name: str, *, permissions: ReadPermission, skills: dict[str, Skill]):
+    """Activates a skill with a specified name.
+
+    Args:
+        skill_name (str): The skill to activate
+
+    Returns:
+        str: The fetched content as a string.
+    """
+    skill = skills.get(skill_name)
+    if not skill:
+        raise ToolCallError("skill", f"Unknown skill: {skill_name}")
+
+    if not permissions.can_read(skill.directory):
+        raise ToolCallError(
+            "skill", f"Read permission denied for path: {skill.directory}"
+        )
+
+    return load_skill(skill)
+
+
+@tool(type="default")
+def read_file(
+    path: Path | str, offset: int = 0, limit: int = 200, *, permissions: ReadPermission
+) -> str:
+    if not permissions.can_read(path):
+        raise ToolCallError("read_file", f"Read permission denied for path: {path}")
+
+    if offset < 0:
+        raise ToolCallError("read_file", "offset must be greater than or equal to 0")
+    if limit < 1:
+        raise ToolCallError("read_file", "limit must be greater than or equal to 1")
+
+    read_path = Path(path).expanduser()
+
+    text = ""
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise ToolCallError(
+            "read_file", f"File is not valid UTF-8 text: {path}"
+        ) from exc
+
+    all_lines = text.splitlines()
+    end = offset + limit
+    lines = all_lines[offset:end]
+
+    output = [f"<path>{path}</path>", "<type>file</type>", "<content>"]
+    output.extend(
+        f"{line_number}: {line}"
+        for line_number, line in enumerate(lines, start=offset + 1)
+    )
+
+    total_lines = len(all_lines)
+    if end < total_lines:
+        output.append(
+            f"(Showing lines {offset}-{offset + len(lines) - 1} of {total_lines}. Use a larger offset to continue.)"
+        )
+    else:
+        output.append(f"(End of file - total {total_lines} lines)")
+
+    output.append("</content>")
+    return "\n".join(output)
 
 
 @tool(type="default")
