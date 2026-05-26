@@ -7,7 +7,7 @@ from typing import Generic, TypedDict, TypeVar
 from daystrom import Provider
 from daystrom.components.tool_util import CUSTOM_TOOLS, DEFAULT_TOOLS, Tool
 from daystrom.exceptions import ToolCallError
-from daystrom.permissions import ReadPermission
+from daystrom.permissions import ReadPermission, SkillPermission
 from daystrom.skills import Skill, discover_skills, format_skill_prompt
 
 ComponentResponseT = TypeVar("ComponentResponseT")
@@ -147,6 +147,7 @@ class LLM(Component[LLMResponse]):
 
 class AgentPermissions(TypedDict, total=False):
     read_file: ReadPermission
+    skill: SkillPermission
 
 
 class Agent(Component[AgentResponse]):
@@ -195,28 +196,43 @@ class Agent(Component[AgentResponse]):
             toolPermissions = AgentPermissions()
 
         for tool in tools:
+            if toolPermissions.get(tool):
+                continue
+
             match tool:
                 case "read_file":
-                    if toolPermissions.get(tool):
-                        continue
-                    else:
-                        permission = ReadPermission(allowed_roots=[self.cwd])
-                        toolPermissions[tool] = permission
+                    permission = ReadPermission(allowed_roots=[self.cwd])
+                    toolPermissions[tool] = permission
+                case "skill":
+                    permission = SkillPermission(allowed_roots=[])
+                    toolPermissions[tool] = permission
+
         self.toolPermissions = toolPermissions
 
-        self.skills = self._get_skills(skills)
+        # skill and read_file tools are required for skills to work properly
+        # so don't tell the agent about skills unless it has those tools
+        self.skills = {}
         self.activated_skills = set()
-        if readPermission := self.toolPermissions.get("read_file"):
-            if not isinstance(readPermission, ReadPermission):
-                raise ValueError(
-                    "'read_file' tool permission must be of type ReadPermission"
-                )
-            for skill in self.skills.values():
-                readPermission.add_read_root(skill.directory)
+        if "skill" in self.tools and "read_file" in self.tools:
+            self.skills = self._get_skills(skills)
+            if (skillPermission := self.toolPermissions.get("skill")) and (
+                readPermission := self.toolPermissions.get("read_file")
+            ):
+                if not isinstance(skillPermission, SkillPermission):
+                    raise ValueError(
+                        "'skill' tool permission must be of type SkillPermission"
+                    )
+                if not isinstance(readPermission, ReadPermission):
+                    raise ValueError(
+                        "'read_file' tool permission must be of type ReadPermission"
+                    )
+                for skill in self.skills.values():
+                    skillPermission.add_skill_root(skill.directory)
+                    readPermission.add_read_root(skill.directory)
 
-        skill_prompt = format_skill_prompt(self.skills)
-        if skill_prompt:
-            self.context.add_message("system", skill_prompt)
+            skill_prompt = format_skill_prompt(self.skills)
+            if skill_prompt:
+                self.context.add_message("system", skill_prompt)
 
     def invoke(self, prompt, *args, **kwargs) -> AgentResponse:
         loop = 0

@@ -71,8 +71,11 @@ def parse_skill(path: Path) -> Skill | None:
         log.warning("Skipping unreadable skill %s: %s", path, exc)
         return None
 
-    frontmatter, _ = split_frontmatter_body(content)
-    if frontmatter is None:
+    try:
+        frontmatter, _ = split_frontmatter_body(content)
+        if frontmatter is None:
+            return None
+    except ValueError:
         return None
 
     data = _parse_yaml_frontmatter(frontmatter, path)
@@ -120,11 +123,11 @@ def split_frontmatter_body(content: str) -> tuple[str | None, str]:
     delimiter = "---"
 
     start = content.find(delimiter)
-    if start:
+    if start >= 0:
         if start != 0:
             raise ValueError(f"Frontmatter must start at the beginning of the file")
         end = content.find(delimiter, start + len(delimiter))
-        if not end:
+        if end == -1:
             raise ValueError(f"Frontmatter closing delimiter not found")
 
         frontmatter = content[start + len(delimiter) : end].strip()

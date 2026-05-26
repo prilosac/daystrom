@@ -5,12 +5,12 @@ from markdownify import markdownify as md
 
 from daystrom.components.tool_util import tool
 from daystrom.exceptions import ToolCallError
-from daystrom.permissions import ReadPermission
+from daystrom.permissions import ReadPermission, SkillPermission
 from daystrom.skills import Skill, load_skill
 
 
 @tool(type="default")
-def skill(skill_name: str, *, permissions: ReadPermission, skills: dict[str, Skill]):
+def skill(skill_name: str, *, permissions: SkillPermission, skills: dict[str, Skill]):
     """Activates a skill with a specified name.
 
     Args:
@@ -33,7 +33,7 @@ def skill(skill_name: str, *, permissions: ReadPermission, skills: dict[str, Ski
 
 @tool(type="default")
 def read_file(
-    path: Path | str, offset: int = 0, limit: int = 200, *, permissions: ReadPermission
+    path: str, offset: int = 0, limit: int = 200, *, permissions: ReadPermission
 ) -> str:
     if not permissions.can_read(path):
         raise ToolCallError("read_file", f"Read permission denied for path: {path}")
@@ -43,11 +43,11 @@ def read_file(
     if limit < 1:
         raise ToolCallError("read_file", "limit must be greater than or equal to 1")
 
-    read_path = Path(path).expanduser()
+    path_obj = Path(path).expanduser()
 
     text = ""
     try:
-        text = Path(path).read_text(encoding="utf-8")
+        text = path_obj.read_text(encoding="utf-8")
     except UnicodeDecodeError as exc:
         raise ToolCallError(
             "read_file", f"File is not valid UTF-8 text: {path}"
@@ -66,7 +66,7 @@ def read_file(
     total_lines = len(all_lines)
     if end < total_lines:
         output.append(
-            f"(Showing lines {offset}-{offset + len(lines) - 1} of {total_lines}. Use a larger offset to continue.)"
+            f"(Showing lines {offset+1}-{offset + len(lines)} of {total_lines}. Use a larger offset to continue.)"
         )
     else:
         output.append(f"(End of file - total {total_lines} lines)")
