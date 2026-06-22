@@ -22,7 +22,10 @@ class Skill:
     license: str | None = None
     compatibility: str | None = None
     metadata: dict[str, str] = field(default_factory=dict)
-    allowed_tools: str | None = None
+    # TODO:
+    # this cannot restrict tools, this can only expose extra tools
+    # that the agent only knows about once the skill gets activated
+    # allowed_tools: str | None = None
 
 
 def discover_skills(
@@ -74,6 +77,7 @@ def parse_skill(path: Path) -> Skill | None:
     try:
         frontmatter, _ = split_frontmatter_body(content)
         if frontmatter is None:
+            log.warning("Skipping skill missing frontmatter: %s", path)
             return None
     except ValueError:
         return None
@@ -113,7 +117,7 @@ def parse_skill(path: Path) -> Skill | None:
         license=_optional_str(data.get("license")),
         compatibility=_optional_str(data.get("compatibility")),
         metadata={str(key): str(value) for key, value in metadata.items()},
-        allowed_tools=_optional_str(data.get("allowed-tools")),
+        # allowed_tools=_optional_str(data.get("allowed-tools")),
     )
 
 

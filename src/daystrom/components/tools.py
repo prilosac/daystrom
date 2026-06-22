@@ -5,7 +5,7 @@ from markdownify import markdownify as md
 
 from daystrom.components.tool_util import tool
 from daystrom.exceptions import ToolCallError
-from daystrom.permissions import ReadPermission, SkillPermission
+from daystrom.permissions import ReadPermission, SkillPermission, WebFetchPermission
 from daystrom.skills import Skill, load_skill
 
 
@@ -76,7 +76,9 @@ def read_file(
 
 
 @tool(type="default")
-def web_fetch(url: str, format: str = "markdown") -> str:
+def web_fetch(
+    url: str, format: str = "markdown", *, permissions: WebFetchPermission
+) -> str:
     """Fetches content from a given URL.
 
     Args:
@@ -86,6 +88,9 @@ def web_fetch(url: str, format: str = "markdown") -> str:
     Returns:
         str: The fetched content as a string.
     """
+    if not permissions.has():
+        raise ToolCallError("web_fetch", f"Web fetch permission denied for agent")
+
     import httpx
 
     accept_header = "*/*"

@@ -7,7 +7,7 @@ from typing import Generic, TypedDict, TypeVar
 from daystrom import Provider
 from daystrom.components.tool_util import CUSTOM_TOOLS, DEFAULT_TOOLS, Tool
 from daystrom.exceptions import ToolCallError
-from daystrom.permissions import ReadPermission, SkillPermission
+from daystrom.permissions import ReadPermission, SkillPermission, WebFetchPermission
 from daystrom.skills import Skill, discover_skills, format_skill_prompt
 
 ComponentResponseT = TypeVar("ComponentResponseT")
@@ -146,8 +146,9 @@ class LLM(Component[LLMResponse]):
 
 
 class AgentPermissions(TypedDict, total=False):
-    read_file: ReadPermission
     skill: SkillPermission
+    read_file: ReadPermission
+    web_fetch: WebFetchPermission
 
 
 class Agent(Component[AgentResponse]):
@@ -200,11 +201,14 @@ class Agent(Component[AgentResponse]):
                 continue
 
             match tool:
+                case "skill":
+                    permission = SkillPermission(allowed_roots=[])
+                    toolPermissions[tool] = permission
                 case "read_file":
                     permission = ReadPermission(allowed_roots=[self.cwd])
                     toolPermissions[tool] = permission
-                case "skill":
-                    permission = SkillPermission(allowed_roots=[])
+                case "web_fetch":
+                    permission = WebFetchPermission(allowed=True)
                     toolPermissions[tool] = permission
 
         self.toolPermissions = toolPermissions
@@ -252,30 +256,32 @@ class Agent(Component[AgentResponse]):
 
             for tool_call in res.tool_calls:
                 try:
-                    match tool_call.tool.name:
-                        case "skill":
-                            skill_name = tool_call.kwargs.get("skill_name")
-                            if skill_name in self.activated_skills:
-                                tool_res = f"Skill '{skill_name}' is already activated."
-                            else:
-                                tool_res = tool_call.tool.call(
-                                    *tool_call.args,
-                                    **tool_call.kwargs,
-                                    permissions=self.toolPermissions.get(
-                                        tool_call.tool.name
-                                    ),
-                                    skills=self.skills,
-                                )
-                                if skill_name:
-                                    self.activated_skills.add(skill_name)
-                        case _:
+                    if tool_call.tool.name == "skill":
+                        skill_name = tool_call.kwargs.get("skill_name")
+                        if skill_name in self.activated_skills:
+                            tool_res = f"Skill '{skill_name}' is already activated."
+                        else:
                             tool_res = tool_call.tool.call(
                                 *tool_call.args,
                                 **tool_call.kwargs,
                                 permissions=self.toolPermissions.get(
                                     tool_call.tool.name
                                 ),
+                                skills=self.skills,
                             )
+                            if skill_name:
+                                self.activated_skills.add(skill_name)
+                    elif tool_call.tool.name in list(self.toolPermissions.keys()):
+                        tool_res = tool_call.tool.call(
+                            *tool_call.args,
+                            **tool_call.kwargs,
+                            permissions=self.toolPermissions.get(tool_call.tool.name),
+                        )
+                    else:
+                        tool_res = tool_call.tool.call(
+                            *tool_call.args, **tool_call.kwargs
+                        )
+
                     self.context.add_message(
                         "tool", text=tool_res, tool_call_id=tool_call.tool_call_id
                     )

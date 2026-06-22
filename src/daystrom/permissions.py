@@ -63,3 +63,18 @@ class SkillPermission(Permission):
                 return True
 
         return False
+
+
+class WebFetchPermission(Permission):
+    def __init__(self, allowed: bool = False):
+        self.allowed = allowed
+        super().__init__(
+            name=self.__class__.__name__,
+            description="Permission to execute web fetches",
+        )
+
+    def set_allowed(self, allowed: bool) -> None:
+        self.allowed = allowed
+
+    def has(self) -> bool:
+        return self.allowed

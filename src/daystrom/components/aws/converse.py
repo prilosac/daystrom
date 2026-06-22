@@ -24,7 +24,6 @@ class AwsAccessKeyAuth:
         auth_dict = {
             k: v for k, v in auth_dict.items() if k != "kind" and v is not None
         }
-        # breakpoint()
         return auth_dict
 
 
