@@ -217,7 +217,11 @@ class Agent(Component[AgentResponse]):
         # so don't tell the agent about skills unless it has those tools
         self.skills = {}
         self.activated_skills = set()
-        if "skill" in self.tools and "read_file" in self.tools:
+        if (
+            (skills is None or skills)
+            and "skill" in self.tools
+            and "read_file" in self.tools
+        ):
             self.skills = self._get_skills(skills)
             if (skillPermission := self.toolPermissions.get("skill")) and (
                 readPermission := self.toolPermissions.get("read_file")
@@ -237,6 +241,9 @@ class Agent(Component[AgentResponse]):
             skill_prompt = format_skill_prompt(self.skills)
             if skill_prompt:
                 self.context.add_message("system", skill_prompt)
+        else:
+            self.toolPermissions.pop("skill", None)
+            self.tools.pop("skill", None)
 
     def invoke(self, prompt, *args, **kwargs) -> AgentResponse:
         loop = 0
