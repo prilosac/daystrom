@@ -52,6 +52,10 @@ def tool(func=None, *, type="custom"):
                 "permissions",
                 "skills",
             ):
+                if type != "default":
+                    raise TypeError(
+                        f"'{name}' is reserved for default tool injection."
+                    )
                 continue
 
             required = False
