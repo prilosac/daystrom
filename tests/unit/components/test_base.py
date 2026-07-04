@@ -78,6 +78,24 @@ def test_tool_decorator_extracts_params():
     del CUSTOM_TOOLS["param_tool"]
 
 
+def test_tool_decorator_keeps_non_injected_keyword_only_params():
+    @tool
+    def keyword_only_tool(
+        query: str, *, limit: int, permissions: object, skills: dict
+    ) -> str:
+        return query
+
+    t = CUSTOM_TOOLS["keyword_only_tool"]
+
+    assert "query" in t.params
+    assert "limit" in t.params
+    assert t.params["limit"]["type"] == int
+    assert "permissions" not in t.params
+    assert "skills" not in t.params
+
+    del CUSTOM_TOOLS["keyword_only_tool"]
+
+
 def test_tool_decorator_list_param():
     """Test @tool decorator handles list type parameters with items."""
 
