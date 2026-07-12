@@ -1,11 +1,14 @@
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Generic, TypeVar
+from pathlib import Path
+from typing import Generic, TypedDict, TypeVar
 
 from daystrom import Provider
 from daystrom.components.tool_util import CUSTOM_TOOLS, DEFAULT_TOOLS, Tool
 from daystrom.exceptions import ToolCallError
+from daystrom.permissions import ReadPermission, SkillPermission, WebFetchPermission
+from daystrom.skills import Skill, discover_skills, format_skill_prompt
 
 ComponentResponseT = TypeVar("ComponentResponseT")
 
@@ -142,18 +145,30 @@ class LLM(Component[LLMResponse]):
         return input_total + output_total
 
 
+class AgentPermissions(TypedDict, total=False):
+    skill: SkillPermission
+    read_file: ReadPermission
+    web_fetch: WebFetchPermission
+
+
 class Agent(Component[AgentResponse]):
     llm: LLM
     context: Context
     max_loops: int
-    tools: dict
+    tools: dict[str, Tool]
+    toolPermissions: AgentPermissions
+    skills: dict[str, Skill]
+    activated_skills: set[str]
+    cwd: Path
 
     def __init__(
         self,
         llm: LLM,
         context: Context | None = None,
         tools: dict[str, Tool] | None = None,
+        toolPermissions: AgentPermissions | None = None,
         max_loops: int = 30,
+        skills: list[str] | None = None,
     ):
         # import tools here if they haven't been
         # already so the agent has access
@@ -168,11 +183,67 @@ class Agent(Component[AgentResponse]):
             self.context = Context()
 
         self.max_loops = max_loops
+        self.cwd = Path.cwd().resolve(strict=False)
+
         if tools is None:
             tools = DEFAULT_TOOLS.copy()
             tools.update(CUSTOM_TOOLS)
+
         self.tools = tools
         self.llm.tools = self.tools
+
+        # initialize tool permissions
+        if toolPermissions is None:
+            toolPermissions = AgentPermissions()
+
+        for tool in tools:
+            if toolPermissions.get(tool):
+                continue
+
+            match tool:
+                case "skill":
+                    permission = SkillPermission(allowed_roots=[])
+                    toolPermissions[tool] = permission
+                case "read_file":
+                    permission = ReadPermission(allowed_roots=[self.cwd])
+                    toolPermissions[tool] = permission
+                case "web_fetch":
+                    permission = WebFetchPermission(allowed=True)
+                    toolPermissions[tool] = permission
+
+        self.toolPermissions = toolPermissions
+
+        # skill and read_file tools are required for skills to work properly
+        # so don't tell the agent about skills unless it has those tools
+        self.skills = {}
+        self.activated_skills = set()
+        if (
+            (skills is None or skills)
+            and "skill" in self.tools
+            and "read_file" in self.tools
+        ):
+            self.skills = self._get_skills(skills)
+            if (skillPermission := self.toolPermissions.get("skill")) and (
+                readPermission := self.toolPermissions.get("read_file")
+            ):
+                if not isinstance(skillPermission, SkillPermission):
+                    raise ValueError(
+                        "'skill' tool permission must be of type SkillPermission"
+                    )
+                if not isinstance(readPermission, ReadPermission):
+                    raise ValueError(
+                        "'read_file' tool permission must be of type ReadPermission"
+                    )
+                for skill in self.skills.values():
+                    skillPermission.add_skill_root(skill.directory)
+                    readPermission.add_read_root(skill.directory)
+
+            skill_prompt = format_skill_prompt(self.skills)
+            if skill_prompt:
+                self.context.add_message("system", skill_prompt)
+        else:
+            self.toolPermissions.pop("skill", None)
+            self.tools.pop("skill", None)
 
     def invoke(self, prompt, *args, **kwargs) -> AgentResponse:
         loop = 0
@@ -192,7 +263,32 @@ class Agent(Component[AgentResponse]):
 
             for tool_call in res.tool_calls:
                 try:
-                    tool_res = tool_call.tool.call(*tool_call.args, **tool_call.kwargs)
+                    if tool_call.tool.name == "skill":
+                        skill_name = tool_call.kwargs.get("skill_name")
+                        if skill_name in self.activated_skills:
+                            tool_res = f"Skill '{skill_name}' is already activated."
+                        else:
+                            tool_res = tool_call.tool.call(
+                                *tool_call.args,
+                                **tool_call.kwargs,
+                                permissions=self.toolPermissions.get(
+                                    tool_call.tool.name
+                                ),
+                                skills=self.skills,
+                            )
+                            if skill_name:
+                                self.activated_skills.add(skill_name)
+                    elif tool_call.tool.name in list(self.toolPermissions.keys()):
+                        tool_res = tool_call.tool.call(
+                            *tool_call.args,
+                            **tool_call.kwargs,
+                            permissions=self.toolPermissions.get(tool_call.tool.name),
+                        )
+                    else:
+                        tool_res = tool_call.tool.call(
+                            *tool_call.args, **tool_call.kwargs
+                        )
+
                     self.context.add_message(
                         "tool", text=tool_res, tool_call_id=tool_call.tool_call_id
                     )
@@ -213,3 +309,19 @@ class Agent(Component[AgentResponse]):
 
         agent_res = AgentResponse(text=(res.text if res else ""))
         return agent_res
+
+    def _get_skills(self, skills: list[str] | None) -> dict[str, Skill]:
+        if skills == []:
+            return {}
+
+        discovered_skills = discover_skills(cwd=self.cwd)
+        if skills is None:
+            return discovered_skills
+
+        missing_skills = sorted(set(skills) - set(discovered_skills))
+        if missing_skills:
+            raise ValueError(
+                f"Requested skills were not found: {', '.join(missing_skills)}"
+            )
+
+        return {name: discovered_skills[name] for name in skills}

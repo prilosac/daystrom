@@ -46,6 +46,17 @@ def tool(func=None, *, type="custom"):
                 raise TypeError("*args is not supported in tool parameters.")
             if param.kind == inspect.Parameter.VAR_KEYWORD:
                 raise TypeError("**kwargs is not supported in tool parameters.")
+            # Agent-injected keyword-only parameters are runtime plumbing, not
+            # model-supplied tool inputs.
+            if param.kind == inspect.Parameter.KEYWORD_ONLY and name in (
+                "permissions",
+                "skills",
+            ):
+                if type != "default":
+                    raise TypeError(
+                        f"'{name}' is reserved for default tool injection."
+                    )
+                continue
 
             required = False
             if param.default is inspect.Parameter.empty:

@@ -5,6 +5,7 @@ import pytest
 from daystrom import Provider
 from daystrom.components import (
     CUSTOM_TOOLS,
+    DEFAULT_TOOLS,
     LLM,
     Context,
     LLMResponse,
@@ -76,6 +77,38 @@ def test_tool_decorator_extracts_params():
 
     # Cleanup
     del CUSTOM_TOOLS["param_tool"]
+
+
+def test_tool_decorator_rejects_custom_restricted_keyword_only_params():
+    with pytest.raises(TypeError, match="'permissions' is reserved"):
+
+        @tool
+        def permissions_tool(query: str, *, permissions: object) -> str:
+            return query
+
+    with pytest.raises(TypeError, match="'skills' is reserved"):
+
+        @tool
+        def skills_tool(query: str, *, skills: dict) -> str:
+            return query
+
+
+def test_tool_decorator_hides_default_restricted_keyword_only_params():
+    @tool(type="default")
+    def keyword_only_tool(
+        query: str, *, limit: int, permissions: object, skills: dict
+    ) -> str:
+        return query
+
+    t = DEFAULT_TOOLS["keyword_only_tool"]
+
+    assert "query" in t.params
+    assert "limit" in t.params
+    assert t.params["limit"]["type"] == int
+    assert "permissions" not in t.params
+    assert "skills" not in t.params
+
+    del DEFAULT_TOOLS["keyword_only_tool"]
 
 
 def test_tool_decorator_list_param():
